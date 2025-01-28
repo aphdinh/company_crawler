@@ -1,189 +1,270 @@
+import os
+import re
+import json
+import time
+import pandas as pd
+from typing import List, Optional
+
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
+
 from utils import logger, get_openai_client
 from models import Company
-import requests
-from bs4 import BeautifulSoup
-from typing import List, Optional
-import pandas as pd
-import json
-import re
 
 class CompanyInfoScraper:
     def __init__(self):
+        """
+        Initialize the scraper with Selenium WebDriver and OpenAI client.
+        """
         self.client = get_openai_client()
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-
-    def get_page_content(self, url: str) -> Optional[str]:
-        """Fetch and return the page content."""
+        self.driver = self._setup_selenium_driver()
+    
+    def _setup_selenium_driver(self):
+        """
+        Set up and configure Selenium WebDriver with robust options.
+        
+        Returns:
+            WebDriver: Configured Chrome WebDriver
+        """
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        
         try:
-            response = requests.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.text
+            driver = webdriver.Chrome(options=chrome_options)
+            # Set implicit and page load timeouts
+            driver.set_page_load_timeout(30)  # 30 seconds page load timeout
+            return driver
         except Exception as e:
-            logger.error(f"Error fetching {url}: {str(e)}")
-            return None
-
-    def clean_html(self, html_content: str) -> str:
-        """Clean HTML content by removing scripts, styles, and unnecessary elements."""
-        if not html_content:
-            logger.error("Received empty HTML content")
-            return ""
+            logger.error(f"Failed to initialize WebDriver: {e}")
+            raise
+    
+    def get_page_content(self, url: str, timeout: int = 20) -> Optional[str]:
+        """
+        Fetch page content with advanced waiting and error handling.
+        
+        Args:
+            url (str): URL to scrape
+            timeout (int): Maximum wait time in seconds
+        
+        Returns:
+            Optional[str]: Page source HTML or None if failed
+        """
+        try:
+            # Navigate to the page
+            self.driver.get(url)
             
+            # Wait for page to be interactive
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.TAG_NAME, 'body'))
+            )
+            
+            # Additional wait for potential dynamic content
+            time.sleep(3)
+            
+            # Scroll to bottom to trigger lazy loading
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            
+            # Get page source
+            page_source = self.driver.page_source
+            return page_source
+        
+        except Exception as e:
+            logger.error(f"Error fetching {url}: {e}")
+            return None
+    
+    def clean_html(self, html_content: str) -> str:
+        """
+        Clean HTML content by removing unnecessary elements.
+        
+        Args:
+            html_content (str): Raw HTML content
+        
+        Returns:
+            str: Cleaned text content
+        """
+        if not html_content:
+            logger.warning("Received empty HTML content")
+            return ""
+        
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # Remove unwanted elements
-            for element in soup(['script', 'style', 'nav', 'header', 'footer', 'meta']):
+            # Remove script, style, and other non-content tags
+            for element in soup(['script', 'style', 'nav', 'header', 'footer', 'meta', 'svg', 'iframe']):
                 element.decompose()
-                
-            # Get text while preserving some structure
+            
+            # Extract meaningful text while preserving some context
             lines = []
-            for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'div']):
-                text = element.get_text(strip=True)
-                if text:
+            for element in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'div', 'article']):
+                text = element.get_text(strip=True, separator=' ')
+                if text and len(text) > 10:  # Filter out very short texts
                     tag_name = element.name
                     class_names = ' '.join(element.get('class', []))
                     lines.append(f"{tag_name} {class_names}: {text}")
             
             return '\n'.join(lines)
+        
         except Exception as e:
-            logger.error(f"Error cleaning HTML: {str(e)}")
+            logger.error(f"Error cleaning HTML: {e}")
             return ""
-
+    
     def extract_with_llm(self, text: str, source_url: str) -> dict:
         """Use LLM to extract company information from text."""
         try:
             max_text_length = 4000
             truncated_text = text[:max_text_length] if text else ""
             
-            prompt = self._create_extraction_prompt(truncated_text, source_url)
-            
+            prompt = f"""
+            Extract company information from the following webpage content. 
+            Look for:
+            1. Company name (usually in headings or title)
+            2. Company description (usually in paragraphs explaining what the company does)
+            3. Company website URL (look for external links and return ONLY a valid URL starting with http:// or https://)
+            4. Location (where the company is located, usually a country or a city)
+            5. Domain (the industry or field the company operates in, such as "Finance", "Biotech", etc.)
+
+            Source website: {source_url}
+
+            Webpage content:
+            {truncated_text}
+
+            Return ONLY a valid JSON object with these fields:
+            {{
+                "name": "company name",
+                "description": "main description of what the company does",
+                "url": "company website URL (must start with http:// or https://)",
+                "location": "where the company is located, either a country or a city",
+                "domain": "the industry or field the company operates in"
+            }}
+
+            Do not include any additional text or explanations. Only return the JSON object.
+            """
+
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
-                messages=self._create_messages(prompt),
+                messages=[
+                    {"role": "system", "content": "You are a data extraction tool. Extract only the requested information and return it in JSON format."},
+                    {"role": "user", "content": prompt}
+                ],
                 temperature=0.2
             )
 
-            return self._process_llm_response(response, source_url)
-
-        except Exception as e:
-            logger.error(f"Error in LLM extraction: {str(e)}")
-            return self.create_empty_result(source_url)
-
-    def _create_extraction_prompt(self, text: str, source_url: str) -> str:
-        """Create the prompt for LLM extraction."""
-        return f"""
-        Extract company information from the following webpage content. 
-        Look for:
-        1. Company name (usually in headings or title)
-        2. Company description (usually in paragraphs explaining what the company does)
-        3. Company website URL (look for external links and return ONLY a valid URL starting with http:// or https://)
-        4. Location (where the company is located, usually a country or a city)
-        5. Domain (the industry or field the company operates in, such as "Finance", "Biotech", etc.)
-
-        Source website: {source_url}
-        
-        Webpage content:
-        {text}
-
-        Return ONLY a valid JSON object with these fields:
-        {{
-            "name": "company name",
-            "description": "main description of what the company does",
-            "url": "company website URL (must start with http:// or https://)",
-            "location": "where the company is located, either a country or a city",
-            "domain": "the industry or field the company operates in"
-        }}
-        """
-
-    def _create_messages(self, prompt: str) -> List[dict]:
-        """Create messages for the LLM API."""
-        return [
-            {
-                "role": "system", 
-                "content": "You are a data extraction tool. Extract only the requested information and return it in JSON format."
-            },
-            {
-                "role": "user", 
-                "content": prompt
-            }
-        ]
-
-    def _process_llm_response(self, response, source_url: str) -> dict:
-        """Process the LLM response and validate the result."""
-        try:
+            # Get the raw response content
             raw_content = response.choices[0].message.content
-            cleaned_content = re.sub(r'```json|\```', '', raw_content).strip()
-            
-            result = json.loads(cleaned_content)
-            
-            # Validate required fields
-            required_fields = ['name', 'description', 'url', 'location', 'domain']
-            for field in required_fields:
-                if field not in result:
-                    logger.warning(f"Missing field in response: {field}")
-                    result[field] = None
 
-            # Validate URL format
-            if result.get('url'):
-                if not result['url'].startswith(('http://', 'https://')):
-                    logger.warning(f"Invalid URL format: {result['url']}")
-                    result['url'] = None
-            
+            # Remove Markdown code formatting
+            cleaned_content = re.sub(r'```json|\```', '', raw_content).strip()
+
+            # Parse the cleaned JSON content
+            result = json.loads(cleaned_content)
+
+            # Validate the URL
+            if not result.get("url", "").startswith(("http://", "https://")):
+                logger.warning(f"Invalid URL format: {result.get('url')}")
+                result["url"] = ""  # Set URL to empty if invalid
+
+            # Add source website to the result
             result['source'] = source_url
             return result
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
-            return self.create_empty_result(source_url)
+            logger.error(f"Invalid JSON response: {raw_content}")
+            return {}
 
-    def create_empty_result(self, source_url: str) -> dict:
-        """Create an empty result dictionary with all required fields."""
-        return {
-            'name': None,
-            'description': None,
-            'url': None,
-            'location': None,
-            'domain': None,
-            'source': source_url
-        }
-
+        except Exception as e:
+            logger.error(f"Error in LLM extraction: {str(e)}")
+            return {}
+    
     def extract_company_info(self, url: str, source_url: str) -> Optional[Company]:
-        """Extract company information using LLM."""
+        """
+        Main method to extract company information from a URL.
+        """
         logger.info(f"Extracting information from {url}")
         
-        html_content = self.get_page_content(url)
-        if not html_content:
-            return None
-
-        cleaned_text = self.clean_html(html_content)
-        extracted_info = self.extract_with_llm(cleaned_text, source_url)
+        try:
+            # Fetch page content
+            html_content = self.get_page_content(url)
+            if not html_content:
+                logger.warning(f"Failed to retrieve content from {url}")
+                return None
+            
+            # Clean HTML
+            cleaned_text = self.clean_html(html_content)
+            if not cleaned_text:
+                logger.warning(f"No meaningful content extracted from {url}")
+                return None
+            
+            # Extract with LLM
+            extracted_info = self.extract_with_llm(cleaned_text, source_url)
+            
+            # Prepare URL for Pydantic validation
+            company_url = extracted_info.get('url') or url
+            
+            # Ensure URL is properly formatted for HttpUrl validation
+            if company_url and not str(company_url).startswith(('http://', 'https://')):
+                company_url = f'https://{company_url}'
+            
+            # Create Company object
+            try:
+                company = Company(
+                    url=company_url,
+                    name=extracted_info.get('name'),
+                    description=extracted_info.get('description'),
+                    source=source_url,
+                    location=extracted_info.get('location'),
+                    domain=extracted_info.get('domain')
+                )
+                
+                logger.info(f"Successfully extracted information for {company.name}")
+                return company
+            except Exception as val_error:
+                logger.error(f"Validation error creating Company object: {val_error}")
+                return None
         
-        if not extracted_info:
-            return None
-
-        try:
-            company = Company(
-                url=extracted_info.get('url', url),
-                name=extracted_info.get('name'),
-                description=extracted_info.get('description'),
-                source=source_url,
-                location=extracted_info.get('location'),
-                domain=extracted_info.get('domain')
-            )
-            logger.info(f"Successfully extracted information for {company.name}")
-            return company
-
         except Exception as e:
-            logger.error(f"Error creating company object: {str(e)}")
+            logger.error(f"Comprehensive extraction error for {url}: {e}")
             return None
-
+    
+    def __del__(self):
+        """
+        Cleanup method to close WebDriver when the object is destroyed.
+        """
+        if hasattr(self, 'driver'):
+            try:
+                self.driver.quit()
+            except Exception as e:
+                logger.error(f"Error closing WebDriver: {e}")
+    
     def save_to_csv(self, companies: List[Company], filename: str = 'companies.csv'):
-        """Save extracted company information to CSV."""
+        """
+        Save extracted company information to CSV.
+        """
         try:
-            df = pd.DataFrame([company.model_dump() for company in companies])
+            # Convert companies to dictionary for DataFrame
+            company_dicts = [company.model_dump() for company in companies]
+            
+            # Create DataFrame
+            df = pd.DataFrame(company_dicts)
+            
+            # Save to CSV
             df.to_csv(filename, index=False)
             logger.info(f"Saved {len(companies)} companies to {filename}")
+        
         except Exception as e:
-            logger.error(f"Error saving to CSV: {str(e)}")
+            logger.error(f"Error saving to CSV: {e}")
+
+    def scrape_single(self, url: str) -> Optional[Company]:
+        """
+        Scrape information for a single URL.
+        """
+        return self.extract_company_info(url, url)
