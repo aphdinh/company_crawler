@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -48,40 +49,35 @@ class CompanyInfoScraper:
             raise
     
     def get_page_content(self, url: str, timeout: int = 20) -> Optional[str]:
-        """
-        Fetch page content with advanced waiting and error handling.
-        
-        Args:
-            url (str): URL to scrape
-            timeout (int): Maximum wait time in seconds
-        
-        Returns:
-            Optional[str]: Page source HTML or None if failed
-        """
+        """Fetch page content with advanced scrolling and waiting."""
         try:
-            # Navigate to the page
             self.driver.get(url)
-            
-            # Wait for page to be interactive
+
+            # Wait for the body tag to load
             WebDriverWait(self.driver, timeout).until(
                 EC.presence_of_element_located((By.TAG_NAME, 'body'))
             )
-            
-            # Additional wait for potential dynamic content
-            time.sleep(3)
-            
-            # Scroll to bottom to trigger lazy loading
-            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-            
-            # Get page source
+
+            # Scroll dynamically
+            scroll_pause_time = 2
+            last_height = self.driver.execute_script("return document.body.scrollHeight")
+
+            while True:
+                self.driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.END)
+                time.sleep(scroll_pause_time)
+                new_height = self.driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    break
+                last_height = new_height
+
+            # Fetch page source after scrolling
             page_source = self.driver.page_source
             return page_source
-        
+
         except Exception as e:
             logger.error(f"Error fetching {url}: {e}")
             return None
-    
+
     def clean_html(self, html_content: str) -> str:
         """
         Clean HTML content by removing unnecessary elements.
