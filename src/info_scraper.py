@@ -41,8 +41,7 @@ class CompanyInfoScraper:
         
         try:
             driver = webdriver.Chrome(options=chrome_options)
-            # Set implicit and page load timeouts
-            driver.set_page_load_timeout(30)  # 30 seconds page load timeout
+            driver.set_page_load_timeout(30)  
             return driver
         except Exception as e:
             logger.error(f"Failed to initialize WebDriver: {e}")
@@ -155,13 +154,8 @@ class CompanyInfoScraper:
                 temperature=0.2
             )
 
-            # Get the raw response content
             raw_content = response.choices[0].message.content
-
-            # Remove Markdown code formatting
             cleaned_content = re.sub(r'```json|\```', '', raw_content).strip()
-
-            # Parse the cleaned JSON content
             result = json.loads(cleaned_content)
 
             # Validate the URL
@@ -169,7 +163,7 @@ class CompanyInfoScraper:
                 logger.warning(f"Invalid URL format: {result.get('url')}")
                 result["url"] = ""  # Set URL to empty if invalid
 
-            # Add source website to the result
+            # Add source website 
             result['source'] = source_url
             return result
 
@@ -205,8 +199,6 @@ class CompanyInfoScraper:
             
             # Prepare URL for Pydantic validation
             company_url = extracted_info.get('url') or url
-            
-            # Ensure URL is properly formatted for HttpUrl validation
             if company_url and not str(company_url).startswith(('http://', 'https://')):
                 company_url = f'https://{company_url}'
             

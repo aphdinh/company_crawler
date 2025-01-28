@@ -42,7 +42,6 @@ class CompanyURLScraper:
             prompt = f"""
             Given the following list of URLs extracted from a portfolio page, filter and return only those that point to portfolio company pages.
             The URLs may start with '/portfolio/', '/company/', '/investments/', or similar keywords, and they lead to individual company pages.
-            Include URLs with fragment identifiers (e.g., '#ava-finance') if they point to specific companies.
             
             Source URL: {source_url}
             Extracted URLs:
@@ -96,20 +95,14 @@ class CompanyURLScraper:
         return company_urls
 
 def main():
-    # Example VC URL (replace this with your actual VC portfolio URL)
     portfolio_url = "https://www.sequoiacap.com/our-companies/"
-    
-    # Initialize scraper with VC URL
     scraper = CompanyURLScraper(portfolio_url)
-    
-    # Get company URLs from the portfolio page
     company_urls = scraper.get_company_urls(portfolio_url)
     
     if not company_urls:
         logger.error("No company URLs found")
         return
     
-    # Print out the extracted and sorted URLs
     logger.info("Extracted Company URLs:")
     for url in company_urls:
         print(url)

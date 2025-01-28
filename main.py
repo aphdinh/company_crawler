@@ -2,7 +2,6 @@ import sys
 import os
 import argparse
 
-# Add the project root to Python path
 project_root = os.path.abspath(os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(project_root, 'src'))
 
@@ -14,7 +13,6 @@ from src.models import Company
 from tqdm import tqdm
 
 def main():
-    # Set up argument parser
     parser = argparse.ArgumentParser(description="Scrape company information from a portfolio URL")
     parser.add_argument(
         "--portfolio-url", 
@@ -27,13 +25,9 @@ def main():
         help="Output CSV filename"
     )
     
-    # Parse arguments
     args = parser.parse_args()
 
-    # Initialize the URL scraper
     url_scraper = CompanyURLScraper(args.portfolio_url)
-
-    # Get company URLs from the portfolio page
     logger.info("Starting URL scraping...")
     company_urls = url_scraper.get_company_urls(args.portfolio_url)
 
@@ -43,10 +37,7 @@ def main():
 
     logger.info(f"Found {len(company_urls)} company URLs. Proceeding to extract information.")
 
-    # Initialize the Info Scraper
     info_scraper = CompanyInfoScraper()
-
-    # Extract company information from each URL
     companies: List[Company] = []
     
     for url in tqdm(company_urls, desc="Scraping Companies", unit="company"):
