@@ -75,7 +75,6 @@ class CompanyURLScraper:
             except Exception as e:
                 logger.error(f"Error closing WebDriver: {e}")
 
-    # Rest of the methods remain the same
     def preprocess_html(self, html_content: str) -> List[str]:
         """Extract URLs from all possible clickable elements and attributes."""
         try:
