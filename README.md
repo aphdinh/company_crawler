@@ -46,7 +46,7 @@ The --output argument sets the filename for the CSV output.
 ## File Structure
 
 ```
-smart-crawler/
+company-crawler/
 ├── src/
 │   ├── __init__.py
 │   ├── info_scraper.py         # Handles the scraping of company information
