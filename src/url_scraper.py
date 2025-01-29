@@ -5,11 +5,12 @@ import re
 from typing import List
 from utils import logger, get_openai_client
 
+
 class CompanyURLScraper:
     def __init__(self, vc_url):
         self.vc_url = vc_url
         self.client = get_openai_client()
-    
+
     def get_page_content(self, url: str) -> str:
         """Fetch and return the page content."""
         try:
@@ -26,9 +27,9 @@ class CompanyURLScraper:
     def preprocess_html(self, html_content: str) -> List[str]:
         """Extract all href attributes in the HTML content."""
         try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            links = soup.find_all('a', href=True)
-            hrefs = [link['href'] for link in links]
+            soup = BeautifulSoup(html_content, "html.parser")
+            links = soup.find_all("a", href=True)
+            hrefs = [link["href"] for link in links]
             logger.info(f"Extracted {len(hrefs)} hrefs from the HTML content.")
             return hrefs
         except Exception as e:
@@ -53,23 +54,26 @@ class CompanyURLScraper:
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a URL filtering tool. Return only valid company URLs."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a URL filtering tool. Return only valid company URLs.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
-                temperature=0.2
+                temperature=0.2,
             )
 
             # Process response
             extracted_urls = response.choices[0].message.content
             urls = [url.strip() for url in extracted_urls.splitlines() if url.strip()]
-            
+
             # Validate and resolve URLs
             validated_urls = []
             for url in urls:
                 if re.match(r"^(http|https|/)", url):
                     full_url = urljoin(source_url, url)
                     validated_urls.append(full_url)
-            
+
             return validated_urls
 
         except Exception as e:
@@ -90,22 +94,24 @@ class CompanyURLScraper:
 
         company_urls = self.extract_with_llm(hrefs, portfolio_url)
         company_urls.sort()
-        
+
         logger.info(f"Found {len(company_urls)} company URLs")
         return company_urls
+
 
 def main():
     portfolio_url = "https://www.sequoiacap.com/our-companies/"
     scraper = CompanyURLScraper(portfolio_url)
     company_urls = scraper.get_company_urls(portfolio_url)
-    
+
     if not company_urls:
         logger.error("No company URLs found")
         return
-    
+
     logger.info("Extracted Company URLs:")
     for url in company_urls:
         print(url)
+
 
 if __name__ == "__main__":
     main()
