@@ -4,35 +4,48 @@
 
 ## Usage
 
-### Virtual Environment Setup
+### Setup
 
-Install Python 3.9 or higher 
-
-Create a virtual environment:
+1. Create a virtual environment:
 
 ```
 python3 -m venv env
 ```
 
-Activate the virtual environment:
+2. Activate the virtual environment:
 
 ```
 source env/bin/activate
 ```
 
-### Running the Scraper
-
-Clone the repository:
+3. Clone the repository:
 
 ```
 git clone https://github.com/aphdinh/smart-crawler.git
 ```
 
-Install the required dependencies:
+4. Install the required dependencies:
 
 ```
 pip install -r requirements.txt
 ```
+
+### Environment Configuration
+
+1. Create a `.env` file in the `/src` directory:
+
+```
+touch .env
+```
+
+2. Add your OpenAI API key to the `.env` file:
+
+```
+OPENAI_API_KEY=your_api_key_here
+```
+
+
+### Running the Scraper
 
 Run the main script to scrape a portfolio page:
 
