@@ -66,10 +66,9 @@ flowchart TD
     end
 
     subgraph url_scraper.py
-        C[Find Company URLs]
-        C --> D[Extract hrefs]
-        D --> E[LLM Processing]
-        E --> F[Company URLs List]
+        C [Extract hrefs]
+        C --> D[LLM Processing]
+        D --> E[Company URLs List]
     end
 
     subgraph info_scraper.py
