@@ -1,4 +1,4 @@
-# Smart Crawler
+# Company Crawler
 
  Python-based web scraping tool designed to extract company information from portfolio websites.
 
@@ -47,7 +47,6 @@ The --output argument sets the filename for the CSV output.
 
 ```
 smart-crawler/
-├── __pycache__/
 ├── src/
 │   ├── __init__.py
 │   ├── info_scraper.py         # Handles the scraping of company information
