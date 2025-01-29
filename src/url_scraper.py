@@ -67,14 +67,6 @@ class CompanyURLScraper:
             logger.error(f"Error fetching {url}: {e}")
             return None
 
-    def __del__(self):
-        """Cleanup method to close WebDriver."""
-        if hasattr(self, "driver"):
-            try:
-                self.driver.quit()
-            except Exception as e:
-                logger.error(f"Error closing WebDriver: {e}")
-
     def preprocess_html(self, html_content: str) -> List[str]:
         """Extract URLs from all possible clickable elements and attributes."""
         try:
