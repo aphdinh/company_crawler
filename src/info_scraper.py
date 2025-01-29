@@ -13,8 +13,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
-from utils import logger, get_openai_client
-from models import Company
+from .utils import logger, get_openai_client
+from .models import Company
 
 
 class CompanyInfoScraper:

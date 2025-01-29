@@ -2,9 +2,6 @@ import sys
 import os
 import argparse
 
-project_root = os.path.abspath(os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(project_root, "src"))
-
 from src.url_scraper import CompanyURLScraper
 from src.info_scraper import CompanyInfoScraper
 from src.utils import logger

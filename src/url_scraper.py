@@ -2,7 +2,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import re
 from typing import List
-from utils import logger, get_openai_client
+from .utils import logger, get_openai_client
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
