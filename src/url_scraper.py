@@ -1,73 +1,19 @@
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 import re
-from typing import List
-from .utils import logger, get_openai_client
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.keys import Keys
-import time
+from typing import List, Set
+
+from base_scraper import BaseScraper
+from utils import logger
 
 
-class CompanyURLScraper:
-    def __init__(self, vc_url):
+class CompanyURLScraper(BaseScraper):
+    def __init__(self, vc_url: str):
+        """Initialize URL scraper with VC portfolio URL."""
+        super().__init__()
         self.vc_url = vc_url
-        self.client = get_openai_client()
-        self.driver = self._setup_selenium_driver()
 
-    def _setup_selenium_driver(self):
-        """Set up and configure Selenium WebDriver."""
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-extensions")
-
-        try:
-            driver = webdriver.Chrome(options=chrome_options)
-            driver.set_page_load_timeout(30)
-            return driver
-        except Exception as e:
-            logger.error(f"Failed to initialize WebDriver: {e}")
-            raise
-
-    def get_page_content(self, url: str, timeout: int = 20) -> str:
-        """Fetch page content using Selenium"""
-        try:
-            self.driver.get(url)
-
-            # Wait for the body tag to load
-            WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-
-            # Scroll dynamically
-            scroll_pause_time = 2
-            last_height = self.driver.execute_script(
-                "return document.body.scrollHeight"
-            )
-
-            while True:
-                self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
-                time.sleep(scroll_pause_time)
-                new_height = self.driver.execute_script(
-                    "return document.body.scrollHeight"
-                )
-                if new_height == last_height:
-                    break
-                last_height = new_height
-
-            return self.driver.page_source
-
-        except Exception as e:
-            logger.error(f"Error fetching {url}: {e}")
-            return None
-
-    def preprocess_html(self, html_content: str) -> List[str]:
+    def preprocess_html(self, html_content: str) -> Set[str]:
         """Extract URLs from all possible clickable elements and attributes."""
         try:
             soup = BeautifulSoup(html_content, "html.parser")
@@ -108,6 +54,7 @@ class CompanyURLScraper:
                 )
                 hrefs.update(url_matches)
 
+            logger.debug(f"Found {len(hrefs)} potential URLs")
             return hrefs
 
         except Exception as e:
@@ -127,7 +74,8 @@ class CompanyURLScraper:
             Extracted URLs:
             {hrefs_text}
             
-            Return ONLY the valid company URLs, one per line.
+            Return ONLY valid company URLs, one per line.
+            Do not include navigation links, asset URLs, or general pages.
             """
 
             response = self.client.chat.completions.create(
@@ -135,61 +83,83 @@ class CompanyURLScraper:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a URL filtering tool. Return only valid company URLs.",
+                        "content": "You are a URL filtering tool specialized in identifying portfolio company pages from VC websites.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
+                temperature=0.1,
             )
 
             # Process response
             extracted_urls = response.choices[0].message.content
             urls = [url.strip() for url in extracted_urls.splitlines() if url.strip()]
 
-            # Validate and resolve URLs
+            # Resolve relative URLs and validate
             validated_urls = []
             for url in urls:
                 if re.match(r"^(http|https|/)", url):
                     full_url = urljoin(source_url, url)
                     validated_urls.append(full_url)
 
-            return validated_urls
+            # Remove duplicates while preserving order
+            unique_urls = list(dict.fromkeys(validated_urls))
+
+            logger.info(f"Extracted {len(unique_urls)} unique company URLs")
+            return unique_urls
 
         except Exception as e:
             logger.error(f"Error extracting URLs with LLM: {str(e)}")
             return []
 
-    def get_company_urls(self, portfolio_url: str) -> list:
-        """Get all company URLs from a VC portfolio page using LLM."""
-        logger.info(f"Fetching company URLs from {portfolio_url}")
-        html_content = self.get_page_content(portfolio_url)
-        if not html_content:
+    def get_company_urls(self, portfolio_url: str) -> List[str]:
+        """Main method to extract company URLs from portfolio page."""
+        logger.info(f"Processing portfolio page: {portfolio_url}")
+
+        try:
+            # Fetch page content
+            html_content = self.get_page_content(portfolio_url)
+            if not html_content:
+                logger.error("Failed to fetch page content")
+                return []
+
+            # Extract all potential URLs
+            hrefs = self.preprocess_html(html_content)
+            if not hrefs:
+                logger.error("No URLs found in page content")
+                return []
+
+            # Filter for company URLs using LLM
+            company_urls = self.extract_with_llm(list(hrefs), portfolio_url)
+
+            # Sort for consistent output
+            company_urls.sort()
+
+            logger.info(f"Successfully extracted {len(company_urls)} company URLs")
+            return company_urls
+
+        except Exception as e:
+            logger.error(f"Error processing portfolio page: {e}")
             return []
-
-        hrefs = self.preprocess_html(html_content)
-        if not hrefs:
-            logger.error("No hrefs found in the HTML content.")
-            return []
-
-        company_urls = self.extract_with_llm(hrefs, portfolio_url)
-        company_urls.sort()
-
-        logger.info(f"Found {len(company_urls)} company URLs")
-        return company_urls
 
 
 def main():
+    """Command line interface for URL scraper."""
     portfolio_url = "https://www.nvfund.com/portfolio/"
     scraper = CompanyURLScraper(portfolio_url)
-    company_urls = scraper.get_company_urls(portfolio_url)
 
-    if not company_urls:
-        logger.error("No company URLs found")
-        return
+    try:
+        company_urls = scraper.get_company_urls(portfolio_url)
 
-    logger.info(f"Extracted Company URLs: {len(company_urls)} companies")
-    for url in company_urls:
-        print(url)
+        if not company_urls:
+            logger.error("No company URLs found")
+            return
+
+        logger.info(f"Found {len(company_urls)} companies")
+        for url in company_urls:
+            print(url)
+
+    except Exception as e:
+        logger.error(f"Error in main execution: {e}")
 
 
 if __name__ == "__main__":

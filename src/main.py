@@ -2,11 +2,11 @@ import sys
 import os
 import argparse
 
-from src.url_scraper import CompanyURLScraper
-from src.info_scraper import CompanyInfoScraper
-from src.utils import logger
+from url_scraper import CompanyURLScraper
+from info_scraper import CompanyInfoScraper
+from utils import logger
 from typing import List
-from src.models import Company
+from models import Company
 from tqdm import tqdm
 
 

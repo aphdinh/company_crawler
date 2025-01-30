@@ -1,97 +1,21 @@
-import os
-import re
 import json
-import time
+import re
 import pandas as pd
 from typing import List, Optional
-
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 
-from .utils import logger, get_openai_client
-from .models import Company
+from base_scraper import BaseScraper
+from utils import logger
+from models import Company
 
 
-class CompanyInfoScraper:
+class CompanyInfoScraper(BaseScraper):
     def __init__(self):
-        """
-        Initialize the scraper with Selenium WebDriver and OpenAI client.
-        """
-        self.client = get_openai_client()
-        self.driver = self._setup_selenium_driver()
-
-    def _setup_selenium_driver(self):
-        """
-        Set up and configure Selenium WebDriver with robust options.
-
-        Returns:
-            WebDriver: Configured Chrome WebDriver
-        """
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-software-rasterizer")
-
-        try:
-            driver = webdriver.Chrome(options=chrome_options)
-            driver.set_page_load_timeout(30)
-            return driver
-        except Exception as e:
-            logger.error(f"Failed to initialize WebDriver: {e}")
-            raise
-
-    def get_page_content(self, url: str, timeout: int = 20) -> Optional[str]:
-        """Fetch page content with advanced scrolling and waiting."""
-        try:
-            self.driver.get(url)
-
-            # Wait for the body tag to load
-            WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-
-            # Scroll dynamically
-            scroll_pause_time = 2
-            last_height = self.driver.execute_script(
-                "return document.body.scrollHeight"
-            )
-
-            while True:
-                self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.END)
-                time.sleep(scroll_pause_time)
-                new_height = self.driver.execute_script(
-                    "return document.body.scrollHeight"
-                )
-                if new_height == last_height:
-                    break
-                last_height = new_height
-
-            # Fetch page source after scrolling
-            page_source = self.driver.page_source
-            return page_source
-
-        except Exception as e:
-            logger.error(f"Error fetching {url}: {e}")
-            return None
+        """Initialize company info scraper."""
+        super().__init__()
 
     def clean_html(self, html_content: str) -> str:
-        """
-        Clean HTML content by removing unnecessary elements.
-
-        Args:
-            html_content (str): Raw HTML content
-
-        Returns:
-            str: Cleaned text content
-        """
+        """Clean and structure HTML content for LLM processing."""
         if not html_content:
             logger.warning("Received empty HTML content")
             return ""
@@ -99,59 +23,78 @@ class CompanyInfoScraper:
         try:
             soup = BeautifulSoup(html_content, "html.parser")
 
-            # Remove script, style, and other non-content tags
-            for element in soup(
+            # Remove non-content elements
+            for tag in soup(
                 ["script", "style", "nav", "header", "footer", "meta", "svg", "iframe"]
             ):
-                element.decompose()
+                tag.decompose()
 
-            # Extract meaningful text while preserving some context
+            # Extract meaningful text with context
             lines = []
-            for element in soup.find_all(
-                ["p", "h1", "h2", "h3", "h4", "div", "article"]
-            ):
+            priority_tags = ["h1", "h2", "h3", "h4", "p", "div", "article", "section"]
+            priority_classes = [
+                "company-name",
+                "description",
+                "about",
+                "location",
+                "industry",
+            ]
+
+            for element in soup.find_all(priority_tags):
                 text = element.get_text(strip=True, separator=" ")
-                if text and len(text) > 10:  # Filter out very short texts
+                if text and len(text) > 10:
                     tag_name = element.name
                     class_names = " ".join(element.get("class", []))
-                    lines.append(f"{tag_name} {class_names}: {text}")
 
-            return "\n".join(lines)
+                    # Mark priority content
+                    is_priority = any(
+                        pc in class_names.lower() for pc in priority_classes
+                    )
+                    prefix = "[PRIORITY] " if is_priority else ""
+
+                    lines.append(f"{prefix}{tag_name} {class_names}: {text}")
+
+            cleaned_text = "\n".join(lines)
+            logger.debug(f"Cleaned text length: {len(cleaned_text)}")
+            return cleaned_text
 
         except Exception as e:
             logger.error(f"Error cleaning HTML: {e}")
             return ""
 
     def extract_with_llm(self, text: str, source_url: str) -> dict:
-        """Use LLM to extract company information from text."""
+        """Extract structured company information using LLM."""
         try:
             max_text_length = 4000
             truncated_text = text[:max_text_length] if text else ""
 
             prompt = f"""
-            Extract company information from the following webpage content. 
+            Extract company information from this webpage content.
+            The content may include priority-marked sections ([PRIORITY]) which are likely more relevant.
+
             Look for:
-            1. Company name (usually in headings or title)
-            2. Company description (usually in paragraphs explaining what the company does)
-            3. Company website URL (look for external links and return ONLY a valid URL starting with http:// or https://)
-            4. Location (where the company is located, usually a country or a city)
-            5. Domain (the industry or field the company operates in, such as "Finance", "Biotech", etc.)
+            1. Company name (often in h1 tags or elements with 'company-name' class)
+            2. Company description (look for longer text blocks describing the company's activities)
+            3. Company website URL (look for:
+               - Links containing the company name
+               - Company URLs in text content
+               - External website references
+               Must start with http:// or https://)
+            4. Location (city, country, or region information)
+            5. Domain/Industry (company's field of operation like "Fintech", "Healthcare", etc.)
 
-            Source website: {source_url}
-
-            Webpage content:
+            Source URL: {source_url}
+            Content:
             {truncated_text}
 
-            Return ONLY a valid JSON object with these fields:
+            Return ONLY a JSON object with these exact fields:
             {{
                 "name": "company name",
-                "description": "main description of what the company does",
-                "url": "company website URL (must start with http:// or https://)",
-                "location": "where the company is located, either a country or a city",
-                "domain": "the industry or field the company operates in"
+                "description": "company description",
+                "url": "company website URL",
+                "location": "company location",
+                "domain": "industry/domain"
             }}
-
-            Do not include any additional text or explanations. Only return the JSON object.
             """
 
             response = self.client.chat.completions.create(
@@ -159,65 +102,61 @@ class CompanyInfoScraper:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a data extraction tool. Extract only the requested information and return it in JSON format.",
+                        "content": "You are a precise data extraction tool specialized in identifying company information from web content. Focus on accuracy and completeness.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.2,
+                temperature=0.1,
             )
 
-            raw_content = response.choices[0].message.content
-            cleaned_content = re.sub(r"```json|\```", "", raw_content).strip()
+            # Process response
+            cleaned_content = re.sub(
+                r"```json|\```", "", response.choices[0].message.content.strip()
+            )
             result = json.loads(cleaned_content)
 
-            # Validate the URL
+            # Validate URL format
             if not result.get("url", "").startswith(("http://", "https://")):
                 logger.warning(f"Invalid URL format: {result.get('url')}")
-                result["url"] = ""  # Set URL to empty if invalid
+                result["url"] = source_url
 
-            # Add source website
             result["source"] = source_url
             return result
 
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON response: {raw_content}")
+            logger.error(f"Invalid JSON in LLM response: {e}")
             return {}
-
         except Exception as e:
-            logger.error(f"Error in LLM extraction: {str(e)}")
+            logger.error(f"Error in LLM extraction: {e}")
             return {}
 
     def extract_company_info(self, url: str, source_url: str) -> Optional[Company]:
-        """
-        Main method to extract company information from a URL.
-        """
-        logger.info(f"Extracting information from {url}")
+        """Main method to extract company information from a URL."""
+        logger.info(f"Processing company URL: {url}")
 
         try:
             # Fetch page content
             html_content = self.get_page_content(url)
             if not html_content:
-                logger.warning(f"Failed to retrieve content from {url}")
+                logger.warning(f"Failed to get content from {url}")
                 return None
 
-            # Clean HTML
+            # Clean and structure content
             cleaned_text = self.clean_html(html_content)
             if not cleaned_text:
                 logger.warning(f"No meaningful content extracted from {url}")
                 return None
 
-            # Extract with LLM
-            extracted_info = self.extract_with_llm(cleaned_text, source_url)
-
-            # Prepare URL for Pydantic validation
-            company_url = extracted_info.get("url") or url
-            if company_url and not str(company_url).startswith(("http://", "https://")):
-                company_url = f"https://{company_url}"
+            # Extract information using LLM
+            extracted_info = self.extract_with_llm(cleaned_text, url)
+            if not extracted_info:
+                logger.warning(f"Failed to extract information from {url}")
+                return None
 
             # Create Company object
             try:
                 company = Company(
-                    url=company_url,
+                    url=extracted_info.get("url") or url,
                     name=extracted_info.get("name"),
                     description=extracted_info.get("description"),
                     source=source_url,
@@ -227,30 +166,23 @@ class CompanyInfoScraper:
 
                 logger.info(f"Successfully extracted information for {company.name}")
                 return company
-            except Exception as val_error:
-                logger.error(f"Validation error creating Company object: {val_error}")
+
+            except Exception as e:
+                logger.error(f"Error creating Company object: {e}")
                 return None
 
         except Exception as e:
-            logger.error(f"Comprehensive extraction error for {url}: {e}")
+            logger.error(f"Error processing {url}: {e}")
             return None
 
-    def __del__(self):
-        """
-        Cleanup method to close WebDriver when the object is destroyed.
-        """
-        if hasattr(self, "driver"):
-            try:
-                self.driver.quit()
-            except Exception as e:
-                logger.error(f"Error closing WebDriver: {e}")
-
     def save_to_csv(self, companies: List[Company], filename: str = "companies.csv"):
-        """
-        Save extracted company information to CSV.
-        """
+        """Save extracted company information to CSV."""
         try:
-            # Convert companies to dictionary for DataFrame
+            if not companies:
+                logger.warning("No companies to save")
+                return
+
+            # Convert to dictionaries
             company_dicts = [company.model_dump() for company in companies]
 
             # Create DataFrame
@@ -264,7 +196,5 @@ class CompanyInfoScraper:
             logger.error(f"Error saving to CSV: {e}")
 
     def scrape_single(self, url: str) -> Optional[Company]:
-        """
-        Scrape information for a single URL.
-        """
+        """Convenience method to scrape a single company URL."""
         return self.extract_company_info(url, url)

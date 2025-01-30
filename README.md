@@ -50,7 +50,7 @@ OPENAI_API_KEY=your_api_key_here
 Run the main script to scrape a portfolio page:
 
 ```
-python main.py --portfolio-url https://www.nvfund.com/portfolio/ --output companies.csv
+python src/main.py --portfolio-url https://www.nvfund.com/portfolio/ --output companies.csv
 ```
 
 The --portfolio-url argument specifies the URL of the portfolio page to scrape.
@@ -62,14 +62,15 @@ The --output argument sets the filename for the CSV output.
 company-crawler/
 ├── src/
 │   ├── __init__.py
-│   ├── info_scraper.py         # Handles the scraping of company information
-│   ├── models.py               # Defines the Company data model
-│   ├── url_scraper.py          # Handles the scraping of portfolio page URLs
-│   └── utils.py                # Includes utility functions
-├── scrape_single.py            # Script for scraping a single company URL
-├── main.py                     # Main entry point for scraping a portfolio page
+│   ├── base_scraper.py          # Base scraper class
+│   ├── info_scraper.py          # Extends BaseScraper to scrape company info
+│   ├── url_scraper.py           # Extends BaseScraper for URL scraping
+│   ├── models.py                # Defines the Company data model
+|   ├── scrape_single.py         # Script for scraping a single company URL
+│   ├── main.py                  # Main entry point for scraping a portfolio page
+│   └── utils.py                
 ├── .gitignore
-├── companies.csv               # Sample CSV output file
+├── companies.csv                # Sample CSV output file
 └── README.md
 ```
 ```mermaid
